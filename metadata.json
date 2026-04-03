@@ -1,0 +1,5 @@
+{
+  "name": "OsteoAI - Osteoporosis Risk Screening",
+  "description": "AI-powered osteoporosis risk detection using routine X-ray images, patient management, and health guidance.",
+  "requestFramePermissions": []
+}
