@@ -1,11 +1,11 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../context/AuthContext';
-import { 
-  Upload as UploadIcon, 
-  X, 
-  Loader2, 
+import {
+  Upload as UploadIcon,
+  X,
+  Loader2,
   Image as ImageIcon,
   CheckCircle,
   Info
@@ -32,69 +32,64 @@ const Upload: React.FC = () => {
     }
   }, [role, user]);
 
-  const [files, setFiles] = useState<File[]>([]);
-  const [previews, setPreviews] = useState<string[]>([]);
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const navigate = useNavigate();
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      const newFiles = Array.from(e.target.files);
-      if (files.length + newFiles.length > 30) {
-        alert('Maximum 30 images allowed');
-        return;
-      }
-      setFiles([...files, ...newFiles]);
-      const newPreviews = newFiles.map(file => URL.createObjectURL(file as Blob));
-      setPreviews([...previews, ...newPreviews]);
+    if (e.target.files && e.target.files[0]) {
+      const f = e.target.files[0];
+      setFile(f);
+      setPreview(URL.createObjectURL(f));
     }
   };
 
-  const removeFile = (index: number) => {
-    const newFiles = [...files];
-    newFiles.splice(index, 1);
-    setFiles(newFiles);
-
-    const newPreviews = [...previews];
-    URL.revokeObjectURL(newPreviews[index]);
-    newPreviews.splice(index, 1);
-    setPreviews(newPreviews);
+  const removeFile = () => {
+    if (preview) URL.revokeObjectURL(preview);
+    setFile(null);
+    setPreview('');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (files.length === 0) {
-      alert('Please upload at least one X-ray image');
+    if (!file) {
+      alert('Please upload an X-ray image');
+      return;
+    }
+    if (!patientData.age) {
+      alert('Please enter patient age (bone age in months)');
       return;
     }
 
     setLoading(true);
+    setUploadProgress(10);
+
     try {
-      // 1. Add Patient (always add to mock data for demo)
-      await api.post('/patients/add', patientData);
-
-      // 2. Upload X-rays
-      const formData = new FormData();
-      formData.append('patientId', patientData.patientId);
-      files.forEach(file => formData.append('xrays', file));
-
-      const uploadRes = await api.post('/upload-xray', formData, {
-        onUploadProgress: (progressEvent) => {
-          const percentCompleted = Math.round((progressEvent.loaded * 100) / (progressEvent.total || 1));
-          setUploadProgress(percentCompleted);
-        }
+      // 1. Add/update patient record
+      await api.post('/patients/add', {
+        patientId: patientData.patientId,
+        name: patientData.name,
+        age: parseInt(patientData.age),
+        gender: patientData.gender,
+        notes: patientData.notes,
       });
 
-      // 3. Run Prediction on the first image for now
-      const predictRes = await api.post('/predict', { 
-        patientId: patientData.patientId, 
-        imagePath: uploadRes.data.files[0].imagePath 
+      setUploadProgress(30);
+
+      // 2. Run ML prediction (sends image + tabular data)
+      const predictRes = await api.post('/predict', {
+        patientId: patientData.patientId,
+        boneage: parseFloat(patientData.age),
+        gender: patientData.gender,
+        xrayFile: file,
       });
 
+      setUploadProgress(100);
       navigate(`/result/${patientData.patientId}`, { state: { prediction: predictRes.data } });
     } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to complete screening');
+      alert(error.response?.data?.error || 'Failed to complete screening. Is the backend running?');
     } finally {
       setLoading(false);
     }
@@ -108,12 +103,12 @@ const Upload: React.FC = () => {
             {role === 'doctor' ? 'New Patient Screening' : 'Upload My X-ray'}
           </h2>
           <p className="text-slate-500 font-medium">
-            {role === 'doctor' 
-              ? 'Enter patient details and upload X-ray images for AI analysis.' 
+            {role === 'doctor'
+              ? 'Enter patient details and upload X-ray images for AI analysis.'
               : 'Upload your routine X-ray images to get an instant osteoporosis risk assessment.'}
           </p>
         </header>
-        
+
         <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-3 gap-10">
           <div className="lg:col-span-1 space-y-8">
             <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 space-y-6">
@@ -121,16 +116,16 @@ const Upload: React.FC = () => {
                 <Info className="w-5 h-5 mr-2 text-blue-600" />
                 Patient Details
               </h3>
-              
+
               <div className="space-y-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Patient ID</label>
                   <input
                     type="text"
                     required
-                    className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none transition-all disabled:opacity-50"
+                    className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                     value={patientData.patientId}
-                    onChange={(e) => setPatientData({...patientData, patientId: e.target.value})}
+                    onChange={(e) => setPatientData({ ...patientData, patientId: e.target.value })}
                   />
                 </div>
                 <div>
@@ -138,20 +133,25 @@ const Upload: React.FC = () => {
                   <input
                     type="text"
                     required
-                    className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none transition-all disabled:opacity-50"
+                    className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                     value={patientData.name}
-                    onChange={(e) => setPatientData({...patientData, name: e.target.value})}
+                    onChange={(e) => setPatientData({ ...patientData, name: e.target.value })}
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Age</label>
+                    <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">
+                      Bone Age (months)
+                    </label>
                     <input
                       type="number"
                       required
+                      min="1"
+                      max="300"
+                      placeholder="e.g. 120"
                       className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                       value={patientData.age}
-                      onChange={(e) => setPatientData({...patientData, age: e.target.value})}
+                      onChange={(e) => setPatientData({ ...patientData, age: e.target.value })}
                     />
                   </div>
                   <div>
@@ -159,7 +159,7 @@ const Upload: React.FC = () => {
                     <select
                       className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                       value={patientData.gender}
-                      onChange={(e) => setPatientData({...patientData, gender: e.target.value})}
+                      onChange={(e) => setPatientData({ ...patientData, gender: e.target.value })}
                     >
                       <option>Male</option>
                       <option>Female</option>
@@ -174,7 +174,7 @@ const Upload: React.FC = () => {
                     rows={4}
                     placeholder="Any relevant history..."
                     value={patientData.notes}
-                    onChange={(e) => setPatientData({...patientData, notes: e.target.value})}
+                    onChange={(e) => setPatientData({ ...patientData, notes: e.target.value })}
                   ></textarea>
                 </div>
               </div>
@@ -188,43 +188,33 @@ const Upload: React.FC = () => {
                 X-ray Upload
               </h3>
 
-              <div className="space-y-6">
+              {!file ? (
                 <div className="flex items-center justify-center w-full">
                   <label className="flex flex-col items-center justify-center w-full h-80 border-4 border-slate-100 border-dashed rounded-[2rem] cursor-pointer bg-slate-50 hover:bg-slate-100 hover:border-blue-200 transition-all group">
                     <div className="flex flex-col items-center justify-center pt-5 pb-6">
                       <div className="w-20 h-20 bg-white rounded-3xl flex items-center justify-center mb-6 shadow-sm group-hover:scale-110 transition-transform">
                         <UploadIcon className="w-10 h-10 text-blue-600" />
                       </div>
-                      <p className="mb-2 text-lg font-black text-slate-900">Drop your X-rays here</p>
+                      <p className="mb-2 text-lg font-black text-slate-900">Drop your X-ray here</p>
                       <p className="text-sm text-slate-400 font-medium">or click to browse from your device</p>
-                      <p className="mt-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">JPG, PNG (MAX. 30 images)</p>
+                      <p className="mt-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">JPG, PNG accepted</p>
                     </div>
-                    <input type="file" className="hidden" multiple accept="image/*" onChange={handleFileChange} />
+                    <input type="file" className="hidden" accept="image/*" onChange={handleFileChange} />
                   </label>
                 </div>
-
-                {previews.length > 0 && (
-                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-4 mt-8">
-                    {previews.map((src, index) => (
-                      <motion.div 
-                        key={index} 
-                        initial={{ opacity: 0, scale: 0.8 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        className="relative group aspect-square"
-                      >
-                        <img src={src} alt="preview" className="w-full h-full object-cover rounded-2xl shadow-sm border border-slate-100" />
-                        <button
-                          type="button"
-                          onClick={() => removeFile(index)}
-                          className="absolute -top-2 -right-2 bg-rose-500 text-white rounded-full p-1.5 shadow-lg opacity-0 group-hover:opacity-100 transition-all hover:scale-110"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </motion.div>
-                    ))}
-                  </div>
-                )}
-              </div>
+              ) : (
+                <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="relative">
+                  <img src={preview} alt="preview" className="w-full max-h-80 object-contain rounded-3xl shadow-sm border border-slate-100 bg-slate-50" />
+                  <button
+                    type="button"
+                    onClick={removeFile}
+                    className="absolute top-3 right-3 bg-rose-500 text-white rounded-full p-2 shadow-lg hover:scale-110 transition-all"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                  <p className="mt-3 text-center text-sm font-bold text-slate-500">{file.name}</p>
+                </motion.div>
+              )}
             </div>
 
             {loading && (
@@ -237,7 +227,7 @@ const Upload: React.FC = () => {
                   <span className="font-black text-blue-600">{uploadProgress}%</span>
                 </div>
                 <div className="w-full bg-blue-100 rounded-full h-3 overflow-hidden">
-                  <motion.div 
+                  <motion.div
                     initial={{ width: 0 }}
                     animate={{ width: `${uploadProgress}%` }}
                     className="bg-blue-600 h-full rounded-full"
@@ -248,7 +238,7 @@ const Upload: React.FC = () => {
 
             <button
               type="submit"
-              disabled={loading || files.length === 0}
+              disabled={loading || !file}
               className="w-full py-6 px-8 text-white bg-blue-600 hover:bg-blue-700 rounded-[2rem] font-black text-xl shadow-2xl shadow-blue-200 disabled:opacity-50 disabled:shadow-none transition-all flex items-center justify-center hover:-translate-y-1 active:scale-95"
             >
               {loading ? (
